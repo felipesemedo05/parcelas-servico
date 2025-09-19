@@ -54,7 +54,7 @@ if enviar:
             novas_linhas.append({
                 "Data": hoje.strftime("%d/%m/%Y"),
                 "Motivo": motivo,
-                "Destinatario": destinatario,
+                "Destinatário": destinatario,
                 "Método": metodo,
                 "Parcelas": parcelas,
                 "Valor Total": valor_total,
@@ -78,7 +78,7 @@ st.dataframe(df)
 
 if not df.empty:
     # --- Organização em abas ---
-    aba1, aba2, aba3, aba4 = st.tabs(["📊 Resumo Geral", "📅 Previsão Futuras", "💳 Métodos de Pagamento", "📌 Parcelas do Mês"])
+    aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Resumo Geral", "📅 Previsão Futuras", "💳 Métodos de Pagamento", "📌 Parcelas do Mês", "🧮 Simulação de Parcelas"])
 
     with aba1:
         st.subheader("Resumo geral por mês (todos os anos)")
@@ -153,3 +153,60 @@ if not df.empty:
         else:
             st.info("Nenhuma parcela para este mês.")
 
+    with aba5:
+        st.subheader("Simulador de Parcelas (não altera a base de dados)")
+
+        with st.form("simulador"):
+            valor_total_sim = st.number_input("Valor total da compra (R$)", min_value=0.0, format="%.2f", key="valor_sim")
+            parcelas_sim = st.number_input("Quantidade de parcelas", min_value=1, step=1, key="parcelas_sim")
+            enviar_sim = st.form_submit_button("Simular")
+
+        if enviar_sim and valor_total_sim > 0 and parcelas_sim > 0:
+            hoje = datetime.date.today()
+            valor_parcela_base = round(valor_total_sim / parcelas_sim, 2)
+
+            linhas_sim = []
+            for i in range(parcelas_sim):
+                mes = ((hoje.month + i) % 12) + 1
+                ano = hoje.year + ((hoje.month + i) // 12)
+                mes_ano = f"{mes:02d}/{ano}"
+
+                if i < parcelas_sim - 1:
+                    valor_parcela = valor_parcela_base
+                else:
+                    valor_parcela = round(valor_total_sim - valor_parcela_base * (parcelas_sim - 1), 2)
+
+                linhas_sim.append({
+                    "Parcela": i + 1,
+                    "Valor": valor_parcela,
+                    "Mes/Ano": mes_ano,
+                    "Origem": "Simulação"
+                })
+
+            df_sim = pd.DataFrame(linhas_sim)
+
+            st.write("### Distribuição das parcelas simuladas")
+            st.table(df_sim)
+
+            # Copia base real
+            df_copy = df.copy()
+            df_copy = df_copy[["Mes/Ano", "Valor"]].copy()
+            df_copy["Origem"] = "Real"
+
+            # Junta real + simulação
+            df_comb = pd.concat([df_copy, df_sim], ignore_index=True)
+
+            # Totais por mês e origem
+            resumo_por_origem = df_comb.groupby(["Mes/Ano", "Origem"])["Valor"].sum().reset_index()
+            resumo_total = df_comb.groupby("Mes/Ano")["Valor"].sum().reset_index()
+
+            st.write("### Totais por mês (real vs simulação vs combinado)")
+            tabela_final = resumo_total.merge(
+                resumo_por_origem.pivot(index="Mes/Ano", columns="Origem", values="Valor").fillna(0),
+                on="Mes/Ano",
+                how="left"
+            )
+            st.table(tabela_final)
+
+            st.write("### Impacto da simulação nos próximos meses")
+            st.line_chart(data=resumo_total, x="Mes/Ano", y="Valor")
