@@ -3,12 +3,22 @@ import pandas as pd
 import datetime
 import os
 
+# Configuração da página (DEVE ser a primeira chamada do Streamlit)
+st.set_page_config(layout="wide")
+
 # Arquivo da base de dados
 DB_FILE = "dados tratados.csv"
 
 # Carregar base existente ou criar nova
 if os.path.exists(DB_FILE):
     df = pd.read_csv(DB_FILE)
+    # garantir tipos
+    if "Ano" in df.columns:
+        df["Ano"] = df["Ano"].astype(int)
+    if "Mes" in df.columns:
+        df["Mes"] = df["Mes"].astype(int)
+    if "Valor" in df.columns:
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0.0)
 else:
     df = pd.DataFrame(columns=["Data", "Motivo", "Destinatario", "Método", "Parcelas", "Valor Total", "Parcela", "Valor", "Mes/Ano", "Ano", "Mes"])
 
@@ -25,22 +35,30 @@ with st.form("nova_compra"):
 
 if enviar:
     if motivo and destinatario and metodo and parcelas > 0 and valor_total > 0:
-        valor_parcela = round(valor_total / parcelas, 2)
+        # valor base por parcela (arredondado)
+        valor_parcela_base = round(valor_total / parcelas, 2)
         hoje = datetime.date.today()
 
         novas_linhas = []
         for i in range(parcelas):
-            mes = (hoje.month + i - 1) % 12 + 1
-            ano = hoje.year + ((hoje.month + i - 1) // 12)
+            # primeira parcela passa a ser NO PRÓXIMO MÊS
+            mes = ((hoje.month + i) % 12) + 1
+            ano = hoje.year + ((hoje.month + i) // 12)
             mes_ano = f"{mes:02d}/{ano}"
 
+            if i < parcelas - 1:
+                valor_parcela = valor_parcela_base
+            else:
+                valor_parcela = round(valor_total - valor_parcela_base * (parcelas - 1), 2)
+
             novas_linhas.append({
+                "Data": hoje.strftime("%d/%m/%Y"),
                 "Motivo": motivo,
                 "Destinatário": destinatario,
                 "Método": metodo,
                 "Parcelas": parcelas,
                 "Valor Total": valor_total,
-                "Parcela": i+1,
+                "Parcela": i + 1,
                 "Valor": valor_parcela,
                 "Mes/Ano": mes_ano,
                 "Ano": ano,
@@ -49,7 +67,7 @@ if enviar:
 
         df = pd.concat([df, pd.DataFrame(novas_linhas)], ignore_index=True)
         df.to_csv(DB_FILE, index=False)
-        st.success("Compra registrada com sucesso!")
+        st.success("Compra registrada com sucesso! (primeira parcela no mês seguinte)")
     else:
         st.error("Preencha todos os campos corretamente.")
 
@@ -59,61 +77,78 @@ st.header("Visualização das parcelas")
 st.dataframe(df)
 
 if not df.empty:
-    # Resumo geral de todos os anos
-    resumo_geral = df.groupby(["Ano", "Mes"])["Valor"].sum().reset_index()
-    resumo_geral = resumo_geral.sort_values(["Ano", "Mes"])
-    resumo_geral["Mes/Ano"] = resumo_geral["Mes"].astype(str).str.zfill(2) + "/" + resumo_geral["Ano"].astype(str)
+    # --- Organização em abas ---
+    aba1, aba2, aba3, aba4 = st.tabs(["📊 Resumo Geral", "📅 Previsão Futuras", "💳 Métodos de Pagamento", "📌 Parcelas do Mês"])
 
-    st.subheader("Resumo geral por mês (todos os anos)")
-    st.table(resumo_geral[["Mes/Ano", "Valor"]])
-    st.line_chart(data=resumo_geral, x="Mes/Ano", y="Valor")
+    with aba1:
+        st.subheader("Resumo geral por mês (todos os anos)")
+        resumo_geral = df.groupby(["Ano", "Mes"])["Valor"].sum().reset_index()
+        resumo_geral = resumo_geral.sort_values(["Ano", "Mes"])
+        resumo_geral["Mes/Ano"] = resumo_geral["Mes"].astype(str).str.zfill(2) + "/" + resumo_geral["Ano"].astype(str)
 
-    # Filtro por ano
-    anos_disponiveis = sorted(df["Ano"].unique())
-    ano_filtro = st.selectbox("Selecione o ano para detalhar", options=anos_disponiveis)
+        st.table(resumo_geral[["Mes/Ano", "Valor"]])
+        st.line_chart(data=resumo_geral, x="Mes/Ano", y="Valor")
 
-    df_filtrado = df[df["Ano"] == ano_filtro]
+    with aba2:
+        st.subheader("Previsão de parcelas futuras")
+        hoje = datetime.date.today()
+        mes_atual = hoje.month
+        ano_atual = hoje.year
 
-    resumo = df_filtrado.groupby(["Ano", "Mes"])["Valor"].sum().reset_index()
-    resumo = resumo.sort_values(["Ano", "Mes"])
-    resumo["Mes/Ano"] = resumo["Mes"].astype(str).str.zfill(2) + "/" + resumo["Ano"].astype(str)
+        meses_futuros = df[(df["Ano"] > ano_atual) | ((df["Ano"] == ano_atual) & (df["Mes"] > mes_atual))]
 
-    st.subheader(f"Resumo por mês - {ano_filtro}")
-    st.table(resumo[["Mes/Ano", "Valor"]])
-    st.line_chart(data=resumo, x="Mes/Ano", y="Valor")
+        if not meses_futuros.empty:
+            # filtro de mês
+            meses_disponiveis = meses_futuros[["Ano", "Mes"]].drop_duplicates().sort_values(["Ano", "Mes"])
+            meses_disponiveis["Mes/Ano"] = meses_disponiveis["Mes"].astype(str).str.zfill(2) + "/" + meses_disponiveis["Ano"].astype(str)
+            mes_escolhido = st.selectbox("Selecione o mês para visualizar", meses_disponiveis["Mes/Ano"])
 
-    # Parcelas do mês atual
-    hoje = datetime.date.today()
-    mes_atual = hoje.month
-    ano_atual = hoje.year
+            ano_filtro = int(mes_escolhido.split("/")[1])
+            mes_filtro = int(mes_escolhido.split("/")[0])
 
-    parcelas_mes = df[(df["Ano"] == ano_atual) & (df["Mes"] == mes_atual)]
+            meses_futuros_filtrado = meses_futuros[(meses_futuros["Ano"] == ano_filtro) & (meses_futuros["Mes"] == mes_filtro)]
 
-    if not parcelas_mes.empty:
-        st.subheader("Parcelas deste mês")
-        for _, row in parcelas_mes.iterrows():
-            st.write(f"📌 {row['Motivo']} - Parcela {row['Parcela']}/{row['Parcelas']} | Valor: R$ {row['Valor']:.2f} | Método: {row['Método']} | Pra quem: {row['Destinatário']}")
+            previsao = meses_futuros.groupby(["Ano", "Mes"])["Valor"].sum().reset_index()
+            previsao = previsao.sort_values(["Ano", "Mes"])
+            previsao["Mes/Ano"] = previsao["Mes"].astype(str).str.zfill(2) + "/" + previsao["Ano"].astype(str)
 
-        total_mes = parcelas_mes["Valor"].sum()
-        st.markdown(f"### 💰 Total a pagar neste mês: R$ {total_mes:.2f}")
-    else:
-        st.info("Nenhuma parcela para este mês.")
+            st.subheader("Totais dos próximos meses")
+            st.table(previsao[["Mes/Ano", "Valor"]])
+            st.line_chart(data=previsao, x="Mes/Ano", y="Valor")
 
-    # Previsão dos próximos meses
-    st.header("Previsão de parcelas futuras")
-    meses_futuros = df[(df["Ano"] > ano_atual) | ((df["Ano"] == ano_atual) & (df["Mes"] > mes_atual))]
+            st.subheader(f"Detalhes das parcelas em {mes_escolhido}")
+            for _, row in meses_futuros_filtrado.iterrows():
+                st.write(f"📌 {row['Mes/Ano']} - {row['Motivo']} - Parcela {row['Parcela']}/{row['Parcelas']} | Valor: R$ {row['Valor']:.2f} | Método: {row['Método']}")
 
-    if not meses_futuros.empty:
-        previsao = meses_futuros.groupby(["Ano", "Mes"])["Valor"].sum().reset_index()
-        previsao = previsao.sort_values(["Ano", "Mes"])
-        previsao["Mes/Ano"] = previsao["Mes"].astype(str).str.zfill(2) + "/" + previsao["Ano"].astype(str)
+            total_mes_filtro = meses_futuros_filtrado["Valor"].sum()
+            st.markdown(f"### 💰 Total a pagar neste mês: R$ {total_mes_filtro:.2f}")
+        else:
+            st.info("Não há parcelas futuras registradas.")
 
-        st.subheader("Totais dos próximos meses")
-        st.table(previsao[["Mes/Ano", "Valor"]])
-        st.line_chart(data=previsao, x="Mes/Ano", y="Valor")
+    with aba3:
+        st.subheader("Distribuição por Método de Pagamento ao longo do tempo")
+        resumo_metodo_mes = df.groupby(["Mes/Ano", "Método"])["Valor"].sum().reset_index()
+        resumo_metodo_mes = resumo_metodo_mes.pivot(index="Método", columns="Mes/Ano", values="Valor").fillna(0)
+        st.bar_chart(resumo_metodo_mes.transpose())
 
-        st.subheader("Detalhes das parcelas futuras")
-        for _, row in meses_futuros.iterrows():
-            st.write(f"📌 {row['Mes/Ano']} - {row['Motivo']} - Parcela {row['Parcela']}/{row['Parcelas']} | Valor: R$ {row['Valor']:.2f} | Método: {row['Método']} | Pra quem: {row['Destinatário']}")
-    else:
-        st.info("Não há parcelas futuras registradas.")
+    with aba4:
+        hoje = datetime.date.today()
+        mes_atual = hoje.month
+        ano_atual = hoje.year
+
+        parcelas_mes = df[(df["Ano"] == ano_atual) & (df["Mes"] == mes_atual)]
+
+        if not parcelas_mes.empty:
+            st.subheader("Parcelas deste mês")
+            for _, row in parcelas_mes.iterrows():
+                st.write(f"📌 {row['Motivo']} - Parcela {row['Parcela']}/{row['Parcelas']} | Valor: R$ {row['Valor']:.2f} | Método: {row['Método']}")
+
+            total_mes = parcelas_mes["Valor"].sum()
+            st.markdown(f"### 💰 Total a pagar neste mês: R$ {total_mes:.2f}")
+
+            # gráfico de métodos apenas do mês atual
+            st.subheader("Distribuição por Método de Pagamento neste mês")
+            resumo_metodo_mes_atual = parcelas_mes.groupby("Método")["Valor"].sum().reset_index()
+            st.bar_chart(data=resumo_metodo_mes_atual, x="Método", y="Valor")
+        else:
+            st.info("Nenhuma parcela para este mês.")
