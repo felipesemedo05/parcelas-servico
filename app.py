@@ -7,7 +7,7 @@ import os
 st.set_page_config(layout="wide")
 
 # Arquivo da base de dados
-DB_FILE = "dados tratados.csv"
+DB_FILE = "dados tratados x.csv"
 
 # Carregar base existente ou criar nova
 if os.path.exists(DB_FILE):
@@ -210,3 +210,4 @@ if not df.empty:
 
             st.write("### Impacto da simulação nos próximos meses")
             st.line_chart(data=resumo_total, x="Mes/Ano", y="Valor")
+
