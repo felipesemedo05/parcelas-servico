@@ -54,7 +54,7 @@ if enviar:
             novas_linhas.append({
                 "Data": hoje.strftime("%d/%m/%Y"),
                 "Motivo": motivo,
-                "Destinatário": destinatario,
+                "Destinatario": destinatario,
                 "Método": metodo,
                 "Parcelas": parcelas,
                 "Valor Total": valor_total,
@@ -152,3 +152,4 @@ if not df.empty:
             st.bar_chart(data=resumo_metodo_mes_atual, x="Método", y="Valor")
         else:
             st.info("Nenhuma parcela para este mês.")
+
